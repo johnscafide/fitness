@@ -1,8 +1,8 @@
 import { useState, useRef } from 'react';
 import { Download, Upload, Trash2 } from 'lucide-react';
-import { storage, downloadFile, toCSV } from '../storage';
+import { downloadFile } from '../storage';
 
-export default function SettingsPage({ profile, setProfile, workouts, setWorkouts, weights, setWeights, challenge, setChallenge, showToast }) {
+export default function SettingsPage({ profile, setProfile, workouts, setWorkouts, weights, setWeights, challenge, setChallenge, supplements, setSupplements, trtLogs, setTrtLogs, showToast }) {
   const [draft, setDraft] = useState(profile);
   const fileRef = useRef(null);
 
@@ -19,12 +19,11 @@ export default function SettingsPage({ profile, setProfile, workouts, setWorkout
 
   const exportAll = () => {
     const data = {
-      profile,
-      challenge,
-      workouts,
-      weights,
+      profile, challenge, workouts, weights,
+      supplements: supplements || [],
+      trtLogs: trtLogs || [],
       exportedAt: new Date().toISOString(),
-      version: 1,
+      version: 2,
     };
     downloadFile(
       `fitness-backup-${new Date().toISOString().slice(0, 10)}.json`,
@@ -46,8 +45,10 @@ export default function SettingsPage({ profile, setProfile, workouts, setWorkout
         if (data.challenge) setChallenge(data.challenge);
         if (data.workouts) setWorkouts(data.workouts);
         if (data.weights) setWeights(data.weights);
+        if (data.supplements) setSupplements(data.supplements);
+        if (data.trtLogs) setTrtLogs(data.trtLogs);
         showToast('Data imported');
-      } catch (err) {
+      } catch {
         showToast('Invalid file');
       }
     };
@@ -55,27 +56,15 @@ export default function SettingsPage({ profile, setProfile, workouts, setWorkout
   };
 
   const clearAll = () => {
-    const msg = 'This deletes everything: workouts, weights, profile, challenge. There is no undo. Are you absolutely sure?';
-    if (!confirm(msg)) return;
-    if (!confirm('Really delete everything?')) return;
-    setWorkouts([]);
-    setWeights([]);
-    setProfile({
-      name: 'John',
-      heightFt: 5,
-      heightIn: 10,
-      age: 40,
-      sex: 'male',
-      dailyCalorieGoal: 300,
-    });
-    setChallenge({
-      startDate: new Date().toISOString().slice(0, 10),
-      months: 3,
-      startWeight: null,
-      goalWeight: null,
-    });
+    if (!confirm('This deletes EVERYTHING — workouts, weights, supplements, TRT, profile. Are you sure?')) return;
+    if (!confirm('Really? This cannot be undone.')) return;
+    setWorkouts([]); setWeights([]); setSupplements([]); setTrtLogs([]);
+    setProfile({ name: 'John', heightFt: 5, heightIn: 10, age: 40, sex: 'male', dailyCalorieGoal: 300 });
+    setChallenge({ startDate: new Date().toISOString().slice(0, 10), months: 3, startWeight: null, goalWeight: null });
     showToast('Everything cleared');
   };
+
+  const storageSize = Math.round((JSON.stringify({ workouts, weights, profile, challenge, supplements, trtLogs }).length / 1024) * 10) / 10;
 
   return (
     <div>
@@ -91,15 +80,15 @@ export default function SettingsPage({ profile, setProfile, workouts, setWorkout
         <div className="form-grid">
           <div className="form-group">
             <label>Name</label>
-            <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
+            <input value={draft.name || ''} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
           </div>
           <div className="form-group">
             <label>Age</label>
-            <input type="number" value={draft.age} onChange={(e) => setDraft({ ...draft, age: e.target.value })} />
+            <input type="number" value={draft.age || ''} onChange={(e) => setDraft({ ...draft, age: e.target.value })} />
           </div>
           <div className="form-group">
             <label>Sex</label>
-            <select value={draft.sex} onChange={(e) => setDraft({ ...draft, sex: e.target.value })}>
+            <select value={draft.sex || 'male'} onChange={(e) => setDraft({ ...draft, sex: e.target.value })}>
               <option value="male">Male</option>
               <option value="female">Female</option>
               <option value="other">Other</option>
@@ -107,15 +96,15 @@ export default function SettingsPage({ profile, setProfile, workouts, setWorkout
           </div>
           <div className="form-group">
             <label>Height (ft)</label>
-            <input type="number" value={draft.heightFt} onChange={(e) => setDraft({ ...draft, heightFt: e.target.value })} />
+            <input type="number" value={draft.heightFt || ''} onChange={(e) => setDraft({ ...draft, heightFt: e.target.value })} />
           </div>
           <div className="form-group">
             <label>Height (in)</label>
-            <input type="number" value={draft.heightIn} onChange={(e) => setDraft({ ...draft, heightIn: e.target.value })} />
+            <input type="number" value={draft.heightIn || ''} onChange={(e) => setDraft({ ...draft, heightIn: e.target.value })} />
           </div>
           <div className="form-group">
-            <label>Daily Calorie Goal</label>
-            <input type="number" value={draft.dailyCalorieGoal} onChange={(e) => setDraft({ ...draft, dailyCalorieGoal: e.target.value })} />
+            <label>Daily Calorie Burn Goal</label>
+            <input type="number" value={draft.dailyCalorieGoal || ''} onChange={(e) => setDraft({ ...draft, dailyCalorieGoal: e.target.value })} />
           </div>
         </div>
         <button className="btn" onClick={save} style={{ marginTop: 16 }}>Save Profile</button>
@@ -124,7 +113,7 @@ export default function SettingsPage({ profile, setProfile, workouts, setWorkout
       <div className="card" style={{ marginBottom: 20 }}>
         <div className="section-title">Data Management</div>
         <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 16, lineHeight: 1.5 }}>
-          Your data lives in your browser (localStorage). It does NOT sync between devices or browsers. Use the backup button regularly to save a copy you can restore later, or move to another browser.
+          Your data lives in your browser (localStorage). It does NOT sync between devices. Export a backup regularly and save it somewhere safe (Google Drive, email to yourself, etc.). Import it to restore on another device or browser.
         </p>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           <button className="btn" onClick={exportAll}>
@@ -133,32 +122,28 @@ export default function SettingsPage({ profile, setProfile, workouts, setWorkout
           <button className="btn secondary" onClick={() => fileRef.current.click()}>
             <Upload size={14} /> Import Backup
           </button>
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".json"
-            style={{ display: 'none' }}
-            onChange={importFile}
-          />
+          <input ref={fileRef} type="file" accept=".json" style={{ display: 'none' }} onChange={importFile} />
         </div>
       </div>
 
-      <div className="card" style={{ borderColor: 'rgba(255, 68, 68, 0.3)' }}>
+      <div className="card" style={{ borderColor: 'rgba(255,68,68,0.3)', marginBottom: 20 }}>
         <div className="section-title" style={{ color: 'var(--danger)' }}>Danger Zone</div>
         <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 16, lineHeight: 1.5 }}>
-          Permanently delete everything. Export a backup first if you're not 100% sure.
+          Permanently delete everything. Export a backup first.
         </p>
         <button className="btn danger" onClick={clearAll}>
           <Trash2 size={14} /> Clear All Data
         </button>
       </div>
 
-      <div className="card" style={{ marginTop: 20, background: 'var(--bg-3)' }}>
-        <div className="section-title">Stats</div>
-        <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.8 }}>
-          Workouts stored: {workouts.length}<br/>
-          Weight entries: {weights.length}<br/>
-          Storage used: ~{Math.round((JSON.stringify({ workouts, weights, profile, challenge }).length / 1024) * 10) / 10} KB
+      <div className="card" style={{ background: 'var(--bg-3)' }}>
+        <div className="section-title">Storage Stats</div>
+        <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--text-dim)', lineHeight: 2 }}>
+          Workouts: {workouts.length}<br />
+          Weight entries: {weights.length}<br />
+          Supplement logs: {(supplements || []).length}<br />
+          TRT logs: {(trtLogs || []).length}<br />
+          Storage used: ~{storageSize} KB
         </div>
       </div>
     </div>

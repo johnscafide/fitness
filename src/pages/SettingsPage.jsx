@@ -1,8 +1,13 @@
 import { useState, useRef } from 'react';
 import { Download, Upload, Trash2 } from 'lucide-react';
 import { downloadFile } from '../storage';
+import { hasSupabase } from '../supabase';
 
-export default function SettingsPage({ profile, setProfile, workouts, setWorkouts, weights, setWeights, challenge, setChallenge, supplements, setSupplements, trtLogs, setTrtLogs, showToast }) {
+export default function SettingsPage({
+  profile, setProfile, workouts, setWorkouts, weights, setWeights,
+  challenge, setChallenge, supplements, setSupplements, trtLogs, setTrtLogs,
+  showToast, clearAllRemote,
+}) {
   const [draft, setDraft] = useState(profile);
   const fileRef = useRef(null);
 
@@ -19,7 +24,8 @@ export default function SettingsPage({ profile, setProfile, workouts, setWorkout
 
   const exportAll = () => {
     const data = {
-      profile, challenge, workouts, weights,
+      profile, challenge,
+      workouts, weights,
       supplements: supplements || [],
       trtLogs: trtLogs || [],
       exportedAt: new Date().toISOString(),
@@ -41,12 +47,12 @@ export default function SettingsPage({ profile, setProfile, workouts, setWorkout
       try {
         const data = JSON.parse(ev.target.result);
         if (!confirm('This will replace all current data. Continue?')) return;
-        if (data.profile) setProfile(data.profile);
-        if (data.challenge) setChallenge(data.challenge);
-        if (data.workouts) setWorkouts(data.workouts);
-        if (data.weights) setWeights(data.weights);
+        if (data.profile)     setProfile(data.profile);
+        if (data.challenge)   setChallenge(data.challenge);
+        if (data.workouts)    setWorkouts(data.workouts);
+        if (data.weights)     setWeights(data.weights);
         if (data.supplements) setSupplements(data.supplements);
-        if (data.trtLogs) setTrtLogs(data.trtLogs);
+        if (data.trtLogs)     setTrtLogs(data.trtLogs);
         showToast('Data imported');
       } catch {
         showToast('Invalid file');
@@ -55,16 +61,21 @@ export default function SettingsPage({ profile, setProfile, workouts, setWorkout
     reader.readAsText(file);
   };
 
-  const clearAll = () => {
+  const clearAll = async () => {
     if (!confirm('This deletes EVERYTHING — workouts, weights, supplements, TRT, profile. Are you sure?')) return;
     if (!confirm('Really? This cannot be undone.')) return;
+    // Clear Supabase first
+    await clearAllRemote();
+    // Then local state
     setWorkouts([]); setWeights([]); setSupplements([]); setTrtLogs([]);
     setProfile({ name: 'John', heightFt: 5, heightIn: 10, age: 40, sex: 'male', dailyCalorieGoal: 300 });
     setChallenge({ startDate: new Date().toISOString().slice(0, 10), months: 3, startWeight: null, goalWeight: null });
     showToast('Everything cleared');
   };
 
-  const storageSize = Math.round((JSON.stringify({ workouts, weights, profile, challenge, supplements, trtLogs }).length / 1024) * 10) / 10;
+  const storageSize = Math.round(
+    (JSON.stringify({ workouts, weights, profile, challenge, supplements, trtLogs }).length / 1024) * 10
+  ) / 10;
 
   return (
     <div>
@@ -110,18 +121,33 @@ export default function SettingsPage({ profile, setProfile, workouts, setWorkout
         <button className="btn" onClick={save} style={{ marginTop: 16 }}>Save Profile</button>
       </div>
 
+      {/* Sync status */}
+      <div className="card" style={{ marginBottom: 20, borderColor: hasSupabase() ? 'rgba(198,255,61,0.3)' : 'var(--border)' }}>
+        <div className="section-title">Sync Status</div>
+        <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.8 }}>
+          {hasSupabase() ? (
+            <>
+              <span style={{ color: 'var(--accent)' }}>● Supabase connected</span><br />
+              Data syncs automatically across all devices.<br />
+              Your data is stored in your Supabase project.
+            </>
+          ) : (
+            <>
+              <span style={{ color: 'var(--warn)' }}>● Local only (Supabase not configured)</span><br />
+              Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to your Vercel env vars to enable sync.
+            </>
+          )}
+        </div>
+      </div>
+
       <div className="card" style={{ marginBottom: 20 }}>
         <div className="section-title">Data Management</div>
         <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 16, lineHeight: 1.5 }}>
-          Your data lives in your browser (localStorage). It does NOT sync between devices. Export a backup regularly and save it somewhere safe (Google Drive, email to yourself, etc.). Import it to restore on another device or browser.
+          Export a full JSON backup to keep a local copy. Import to restore or migrate to another Supabase project.
         </p>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          <button className="btn" onClick={exportAll}>
-            <Download size={14} /> Export Full Backup (JSON)
-          </button>
-          <button className="btn secondary" onClick={() => fileRef.current.click()}>
-            <Upload size={14} /> Import Backup
-          </button>
+          <button className="btn" onClick={exportAll}><Download size={14} /> Export Full Backup (JSON)</button>
+          <button className="btn secondary" onClick={() => fileRef.current.click()}><Upload size={14} /> Import Backup</button>
           <input ref={fileRef} type="file" accept=".json" style={{ display: 'none' }} onChange={importFile} />
         </div>
       </div>
@@ -129,21 +155,19 @@ export default function SettingsPage({ profile, setProfile, workouts, setWorkout
       <div className="card" style={{ borderColor: 'rgba(255,68,68,0.3)', marginBottom: 20 }}>
         <div className="section-title" style={{ color: 'var(--danger)' }}>Danger Zone</div>
         <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 16, lineHeight: 1.5 }}>
-          Permanently delete everything. Export a backup first.
+          Permanently deletes everything from localStorage {hasSupabase() ? 'and Supabase' : ''}. Export a backup first.
         </p>
-        <button className="btn danger" onClick={clearAll}>
-          <Trash2 size={14} /> Clear All Data
-        </button>
+        <button className="btn danger" onClick={clearAll}><Trash2 size={14} /> Clear All Data</button>
       </div>
 
       <div className="card" style={{ background: 'var(--bg-3)' }}>
-        <div className="section-title">Storage Stats</div>
+        <div className="section-title">Stats</div>
         <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--text-dim)', lineHeight: 2 }}>
           Workouts: {workouts.length}<br />
           Weight entries: {weights.length}<br />
           Supplement logs: {(supplements || []).length}<br />
           TRT logs: {(trtLogs || []).length}<br />
-          Storage used: ~{storageSize} KB
+          Local storage used: ~{storageSize} KB
         </div>
       </div>
     </div>

@@ -1,77 +1,71 @@
 import { useState, useMemo } from 'react';
 import { Trash2 } from 'lucide-react';
-import { uid, todayISO, fmtDate } from '../storage';
+import { uid, todayISO, fmtDate, fmtNum } from '../storage';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
-const INJECTION_SITES = ['Left Glute', 'Right Glute', 'Left Quad', 'Right Quad', 'Left Delt', 'Right Delt', 'Left VG', 'Right VG'];
+const INJECTION_SITES = [
+  'Left Glute','Right Glute','Left Quad','Right Quad',
+  'Left Delt','Right Delt','Left VG','Right VG',
+];
 
-export default function TRTTracker({ trtLogs, setTrtLogs, showToast }) {
-  const [date, setDate] = useState(todayISO());
-  const [dose, setDose] = useState('');
-  const [unit, setUnit] = useState('mg');
+export default function TRTTracker({ trtLogs, setTrtLogs, syncTrtLog, deleteTrtLog, showToast }) {
+  const [date, setDate]         = useState(todayISO());
+  const [dose, setDose]         = useState('');
+  const [unit, setUnit]         = useState('mg');
   const [compound, setCompound] = useState('Testosterone Cypionate');
-  const [site, setSite] = useState('Left Glute');
-  const [notes, setNotes] = useState('');
+  const [site, setSite]         = useState('Left Glute');
+  const [notes, setNotes]       = useState('');
 
   const save = () => {
     if (!dose) { showToast('Enter a dose'); return; }
     const entry = {
-      id: uid(),
-      date,
-      dose: Number(dose),
-      unit,
-      compound,
-      site,
-      notes,
+      id: uid(), date, dose: Number(dose), unit, compound, site, notes,
       createdAt: new Date().toISOString(),
     };
     setTrtLogs([...trtLogs, entry]);
+    syncTrtLog(entry);
     setDose(''); setNotes('');
     showToast('TRT injection logged');
   };
 
   const remove = (id) => {
     setTrtLogs(trtLogs.filter((t) => t.id !== id));
+    deleteTrtLog(id);
   };
 
-  // Next injection estimate (every 7 days)
+  const sorted = useMemo(() => [...trtLogs].sort((a, b) => b.date.localeCompare(a.date)), [trtLogs]);
+
   const nextDate = useMemo(() => {
-    if (!trtLogs.length) return null;
-    const sorted = [...trtLogs].sort((a, b) => b.date.localeCompare(a.date));
+    if (!sorted.length) return null;
     const last = new Date(sorted[0].date + 'T00:00:00');
     last.setDate(last.getDate() + 7);
     return last.toISOString().slice(0, 10);
-  }, [trtLogs]);
+  }, [sorted]);
 
   const daysUntilNext = useMemo(() => {
     if (!nextDate) return null;
     const today = new Date(todayISO() + 'T00:00:00');
-    const next = new Date(nextDate + 'T00:00:00');
+    const next  = new Date(nextDate + 'T00:00:00');
     return Math.round((next - today) / 86400000);
   }, [nextDate]);
 
-  // Chart: doses over time
-  const chartData = useMemo(() => {
-    return [...trtLogs]
-      .sort((a, b) => a.date.localeCompare(b.date))
-      .map((t) => ({
-        date: t.date,
-        short: new Date(t.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' }),
-        dose: t.dose,
-      }));
-  }, [trtLogs]);
+  const chartData = useMemo(() =>
+    [...trtLogs].sort((a, b) => a.date.localeCompare(b.date)).map((t) => ({
+      short: new Date(t.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' }),
+      dose: t.dose,
+    }))
+  , [trtLogs]);
 
-  // Site rotation suggestions
-  const lastSite = trtLogs.length ? [...trtLogs].sort((a, b) => b.date.localeCompare(a.date))[0].site : null;
+  const lastSite = sorted[0]?.site || null;
   const suggestSite = () => {
     if (!lastSite) return INJECTION_SITES[0];
     const idx = INJECTION_SITES.indexOf(lastSite);
     return INJECTION_SITES[(idx + 1) % INJECTION_SITES.length];
   };
 
-  const today = todayISO();
-  const dayOfWeek = new Date().getDay();
-  const isTrtDay = dayOfWeek === 4 || dayOfWeek === 3;
+  const today      = todayISO();
+  const dayOfWeek  = new Date().getDay();
+  const isTrtDay   = dayOfWeek === 4 || dayOfWeek === 3;
   const loggedToday = trtLogs.some((t) => t.date === today);
 
   return (
@@ -83,13 +77,8 @@ export default function TRTTracker({ trtLogs, setTrtLogs, showToast }) {
         </div>
       </div>
 
-      {/* Status banner */}
       {isTrtDay && !loggedToday && (
-        <div className="card" style={{
-          marginBottom: 20,
-          borderColor: 'var(--warn)',
-          background: 'linear-gradient(135deg, var(--bg-2), rgba(255,176,32,0.07))',
-        }}>
+        <div className="card" style={{ marginBottom: 20, borderColor: 'var(--warn)', background: 'linear-gradient(135deg, var(--bg-2), rgba(255,176,32,0.07))' }}>
           <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
             <span style={{ fontSize: 32 }}>💉</span>
             <div>
@@ -115,7 +104,6 @@ export default function TRTTracker({ trtLogs, setTrtLogs, showToast }) {
       )}
 
       <div className="grid grid-2" style={{ marginBottom: 24 }}>
-        {/* Log form */}
         <div className="card">
           <div className="section-title">Log Injection</div>
           <div className="form-grid">
@@ -153,18 +141,18 @@ export default function TRTTracker({ trtLogs, setTrtLogs, showToast }) {
             </div>
           </div>
           <div className="form-group" style={{ marginTop: 10 }}>
-            <label>Notes (how did it feel? pip? energy?)</label>
-            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Smooth injection, no PIP, felt great by day 3..." />
+            <label>Notes</label>
+            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2}
+              placeholder="Smooth injection, no PIP, energy levels..." />
           </div>
           {lastSite && (
             <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--text-mute)', marginTop: 10 }}>
-              💡 Last site: {lastSite} → Suggested next: <strong style={{ color: 'var(--accent)' }}>{suggestSite()}</strong>
+              💡 Last site: {lastSite} → Suggested: <strong style={{ color: 'var(--accent)' }}>{suggestSite()}</strong>
             </div>
           )}
           <button className="btn" style={{ marginTop: 14 }} onClick={save}>Log Injection</button>
         </div>
 
-        {/* Stats */}
         <div className="card">
           <div className="section-title">Protocol Stats</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -183,14 +171,14 @@ export default function TRTTracker({ trtLogs, setTrtLogs, showToast }) {
                 </div>
               )}
             </div>
-            {trtLogs.length > 0 && (
+            {sorted[0] && (
               <div className="stat-card">
                 <div className="stat-label">Last Dose</div>
                 <div>
-                  <span className="stat-value">{[...trtLogs].sort((a, b) => b.date.localeCompare(a.date))[0].dose}</span>
-                  <span className="stat-unit"> {[...trtLogs].sort((a, b) => b.date.localeCompare(a.date))[0].unit}</span>
+                  <span className="stat-value">{sorted[0].dose}</span>
+                  <span className="stat-unit"> {sorted[0].unit}</span>
                 </div>
-                <div className="stat-delta">{[...trtLogs].sort((a, b) => b.date.localeCompare(a.date))[0].compound}</div>
+                <div className="stat-delta">{sorted[0].compound}</div>
               </div>
             )}
           </div>
@@ -216,17 +204,10 @@ export default function TRTTracker({ trtLogs, setTrtLogs, showToast }) {
         <div className="table-wrap">
           <table className="table">
             <thead>
-              <tr>
-                <th>Date</th>
-                <th>Compound</th>
-                <th>Dose</th>
-                <th>Site</th>
-                <th>Notes</th>
-                <th></th>
-              </tr>
+              <tr><th>Date</th><th>Compound</th><th>Dose</th><th>Site</th><th>Notes</th><th></th></tr>
             </thead>
             <tbody>
-              {[...trtLogs].sort((a, b) => b.date.localeCompare(a.date)).map((t) => (
+              {sorted.map((t) => (
                 <tr key={t.id}>
                   <td>{fmtDate(t.date)}</td>
                   <td style={{ fontSize: 12 }}>{t.compound}</td>

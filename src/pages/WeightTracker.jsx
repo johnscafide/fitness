@@ -1,36 +1,27 @@
 import { useState, useMemo } from 'react';
-import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine,
-} from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import { Trash2, Download } from 'lucide-react';
 import { uid, todayISO, fmtDate, fmtNum, toCSV, downloadFile } from '../storage';
 
-export default function WeightTracker({ weights, setWeights, profile, challenge, showToast }) {
-  const [date, setDate] = useState(todayISO());
+export default function WeightTracker({ weights, setWeights, syncWeight, deleteWeight, profile, challenge, showToast }) {
+  const [date, setDate]     = useState(todayISO());
   const [weight, setWeight] = useState('');
-  const [waist, setWaist] = useState('');
-  const [notes, setNotes] = useState('');
+  const [waist, setWaist]   = useState('');
+  const [notes, setNotes]   = useState('');
 
   const save = () => {
-    if (!weight) {
-      showToast('Enter a weight');
-      return;
-    }
+    if (!weight) { showToast('Enter a weight'); return; }
     const exists = weights.find((w) => w.date === date);
     let next;
     if (exists) {
       if (!confirm('Already have a weight for this date. Replace it?')) return;
-      next = weights.map((w) => w.date === date ? {
-        ...w, weight: Number(weight), waist: Number(waist) || null, notes,
-      } : w);
+      const updated = { ...exists, weight: Number(weight), waist: Number(waist) || null, notes };
+      next = weights.map((w) => w.date === date ? updated : w);
+      syncWeight(updated);
     } else {
-      next = [...weights, {
-        id: uid(),
-        date,
-        weight: Number(weight),
-        waist: Number(waist) || null,
-        notes,
-      }];
+      const entry = { id: uid(), date, weight: Number(weight), waist: Number(waist) || null, notes };
+      next = [...weights, entry];
+      syncWeight(entry);
     }
     setWeights(next);
     setWeight(''); setWaist(''); setNotes('');
@@ -40,15 +31,12 @@ export default function WeightTracker({ weights, setWeights, profile, challenge,
   const remove = (id) => {
     if (!confirm('Delete this entry?')) return;
     setWeights(weights.filter((w) => w.id !== id));
+    deleteWeight(id);
   };
 
-  const sorted = useMemo(
-    () => [...weights].sort((a, b) => a.date.localeCompare(b.date)),
-    [weights]
-  );
+  const sorted = useMemo(() => [...weights].sort((a, b) => a.date.localeCompare(b.date)), [weights]);
 
   const chartData = sorted.map((w) => ({
-    date: w.date,
     short: new Date(w.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' }),
     weight: Number(w.weight),
   }));
@@ -56,21 +44,18 @@ export default function WeightTracker({ weights, setWeights, profile, challenge,
   const stats = useMemo(() => {
     if (!sorted.length) return null;
     const first = Number(sorted[0].weight);
-    const last = Number(sorted[sorted.length - 1].weight);
-    const min = Math.min(...sorted.map((w) => Number(w.weight)));
-    const max = Math.max(...sorted.map((w) => Number(w.weight)));
+    const last  = Number(sorted[sorted.length - 1].weight);
+    const min   = Math.min(...sorted.map((w) => Number(w.weight)));
+    const max   = Math.max(...sorted.map((w) => Number(w.weight)));
     return { first, last, min, max, change: last - first };
   }, [sorted]);
 
   const exportCSV = () => {
-    const rows = [...weights].sort((a, b) => a.date.localeCompare(b.date));
     const headers = [
-      { key: 'date', label: 'Date' },
-      { key: 'weight', label: 'Weight (lbs)' },
-      { key: 'waist', label: 'Waist (in)' },
-      { key: 'notes', label: 'Notes' },
+      { key: 'date', label: 'Date' }, { key: 'weight', label: 'Weight (lbs)' },
+      { key: 'waist', label: 'Waist (in)' }, { key: 'notes', label: 'Notes' },
     ];
-    downloadFile(`weights-${new Date().toISOString().slice(0, 10)}.csv`, toCSV(rows, headers));
+    downloadFile(`weights-${new Date().toISOString().slice(0, 10)}.csv`, toCSV(sorted, headers));
     showToast('CSV exported');
   };
 
@@ -82,9 +67,7 @@ export default function WeightTracker({ weights, setWeights, profile, challenge,
           <div className="page-sub">// Track your progress over time</div>
         </div>
         {weights.length > 0 && (
-          <button className="btn secondary" onClick={exportCSV}>
-            <Download size={14} /> Export
-          </button>
+          <button className="btn secondary" onClick={exportCSV}><Download size={14} /> Export</button>
         )}
       </div>
 
@@ -107,12 +90,8 @@ export default function WeightTracker({ weights, setWeights, profile, challenge,
           </div>
           <div className="form-group" style={{ marginTop: 12 }}>
             <label>Notes (optional)</label>
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={2}
-              placeholder="How are you feeling? Anything to remember?"
-            />
+            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2}
+              placeholder="How are you feeling?" />
           </div>
           <button className="btn" onClick={save} style={{ marginTop: 16 }}>Save Weight</button>
         </div>
@@ -143,9 +122,7 @@ export default function WeightTracker({ weights, setWeights, profile, challenge,
                 <div><span className="stat-value">{fmtNum(stats.min, 1)}</span><span className="stat-unit">lbs</span></div>
               </div>
             </div>
-          ) : (
-            <div className="empty">Log your first weight to see stats</div>
-          )}
+          ) : <div className="empty">Log your first weight to see stats</div>}
         </div>
       </div>
 
@@ -157,37 +134,22 @@ export default function WeightTracker({ weights, setWeights, profile, challenge,
               <CartesianGrid stroke="#262626" vertical={false} />
               <XAxis dataKey="short" stroke="#6b6b6b" fontSize={10} />
               <YAxis stroke="#6b6b6b" fontSize={10} domain={['dataMin - 5', 'dataMax + 5']} />
-              <Tooltip
-                contentStyle={{ background: '#131313', border: '1px solid #333', fontSize: 12 }}
-                labelStyle={{ color: '#a1a1a1' }}
-              />
+              <Tooltip contentStyle={{ background: '#131313', border: '1px solid #333', fontSize: 12 }} />
               {challenge.goalWeight && (
-                <ReferenceLine
-                  y={challenge.goalWeight}
-                  stroke="#c6ff3d"
-                  strokeDasharray="3 3"
-                  label={{ value: `Goal: ${challenge.goalWeight}`, position: 'right', fill: '#c6ff3d', fontSize: 10 }}
-                />
+                <ReferenceLine y={challenge.goalWeight} stroke="#c6ff3d" strokeDasharray="3 3"
+                  label={{ value: `Goal: ${challenge.goalWeight}`, position: 'right', fill: '#c6ff3d', fontSize: 10 }} />
               )}
               <Line type="monotone" dataKey="weight" stroke="#4d9fff" strokeWidth={2} dot={{ r: 4, fill: '#4d9fff' }} />
             </LineChart>
           </ResponsiveContainer>
-        ) : (
-          <div className="empty">Add a weight entry to see your trend</div>
-        )}
+        ) : <div className="empty">Add a weight entry to see your trend</div>}
       </div>
 
       {weights.length > 0 && (
         <div className="table-wrap">
           <table className="table">
             <thead>
-              <tr>
-                <th>Date</th>
-                <th>Weight</th>
-                <th>Waist</th>
-                <th>Notes</th>
-                <th></th>
-              </tr>
+              <tr><th>Date</th><th>Weight</th><th>Waist</th><th>Notes</th><th></th></tr>
             </thead>
             <tbody>
               {[...weights].sort((a, b) => b.date.localeCompare(a.date)).map((w) => (

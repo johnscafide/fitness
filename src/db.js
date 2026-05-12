@@ -1,217 +1,333 @@
 /**
  * db.js — Supabase sync layer
  *
- * Strategy:
- *  - All data belongs to a single hardcoded user_id ('john')
- *  - Writes go to localStorage immediately (instant UI), then sync to Supabase async
- *  - On app load, pulls from Supabase and merges with localStorage
- *    using updated_at timestamps so the most recent record always wins
- *  - If Supabase is unreachable, localStorage data is used as fallback
- *  - First-time migration: detects existing localStorage data and upserts it all
+ * Key design decisions:
+ * - All JS objects stay in camelCase throughout the app
+ * - We map to/from snake_case only at the Supabase boundary
+ * - Writes: localStorage first (instant), Supabase async (background)
+ * - Reads: Supabase on login, merge with localStorage, localStorage wins if offline
+ * - Migration: uploads existing localStorage data on first run
  */
 
 import { supabase, hasSupabase } from './supabase';
 import { storage } from './storage';
 
 const USER_ID = 'john';
-const MIGRATION_KEY = 'supabase_migrated_v1';
-
-// ── Helpers ────────────────────────────────────────────────
+const MIGRATION_KEY = 'supabase_migrated_v2';
 
 const now = () => new Date().toISOString();
 
-// Merge two arrays by id, keeping the record with the latest updated_at.
-// Items without updated_at are treated as older.
+// ── camelCase <-> snake_case mappers ──────────────────────
+
+// Workout: JS camel -> DB snake
+const workoutToDb = (w) => ({
+  id:         w.id,
+  user_id:    USER_ID,
+  date:       w.date,
+  type:       w.type,
+  equipment:  w.equipment,
+  calories:   w.calories   ?? 0,
+  minutes:    w.minutes    ?? 0,
+  miles:      w.miles      ?? 0,
+  avg_hr:     w.avgHR      ?? null,
+  max_hr:     w.maxHR      ?? null,
+  exercises:  w.exercises  ?? null,
+  notes:      w.notes      ?? null,
+  created_at: w.createdAt  ?? now(),
+  updated_at: now(),
+});
+
+// DB snake -> JS camel
+const workoutFromDb = (r) => ({
+  id:         r.id,
+  date:       r.date,
+  type:       r.type,
+  equipment:  r.equipment,
+  calories:   Number(r.calories)  || 0,
+  minutes:    Number(r.minutes)   || 0,
+  miles:      Number(r.miles)     || 0,
+  avgHR:      r.avg_hr   != null ? Number(r.avg_hr)  : null,
+  maxHR:      r.max_hr   != null ? Number(r.max_hr)  : null,
+  exercises:  r.exercises ?? [],
+  notes:      r.notes     ?? '',
+  createdAt:  r.created_at,
+  updated_at: r.updated_at,
+});
+
+// Weight
+const weightToDb = (w) => ({
+  id:         w.id,
+  user_id:    USER_ID,
+  date:       w.date,
+  weight:     w.weight,
+  waist:      w.waist     ?? null,
+  notes:      w.notes     ?? null,
+  created_at: w.createdAt ?? now(),
+  updated_at: now(),
+});
+
+const weightFromDb = (r) => ({
+  id:         r.id,
+  date:       r.date,
+  weight:     Number(r.weight),
+  waist:      r.waist != null ? Number(r.waist) : null,
+  notes:      r.notes ?? '',
+  createdAt:  r.created_at,
+  updated_at: r.updated_at,
+});
+
+// Supplement
+const supplementToDb = (s) => ({
+  id:         s.id,
+  user_id:    USER_ID,
+  date:       s.date,
+  name:       s.name,
+  dose:       s.dose       ?? null,
+  time:       s.time       ?? null,
+  notes:      s.notes      ?? null,
+  created_at: s.createdAt  ?? now(),
+  updated_at: now(),
+});
+
+const supplementFromDb = (r) => ({
+  id:         r.id,
+  date:       r.date,
+  name:       r.name,
+  dose:       r.dose  ?? '',
+  time:       r.time  ?? '',
+  notes:      r.notes ?? '',
+  createdAt:  r.created_at,
+  updated_at: r.updated_at,
+});
+
+// TRT log
+const trtToDb = (t) => ({
+  id:         t.id,
+  user_id:    USER_ID,
+  date:       t.date,
+  dose:       t.dose      ?? null,
+  unit:       t.unit      ?? null,
+  compound:   t.compound  ?? null,
+  site:       t.site      ?? null,
+  notes:      t.notes     ?? null,
+  created_at: t.createdAt ?? now(),
+  updated_at: now(),
+});
+
+const trtFromDb = (r) => ({
+  id:         r.id,
+  date:       r.date,
+  dose:       r.dose     != null ? Number(r.dose) : null,
+  unit:       r.unit     ?? '',
+  compound:   r.compound ?? '',
+  site:       r.site     ?? '',
+  notes:      r.notes    ?? '',
+  createdAt:  r.created_at,
+  updated_at: r.updated_at,
+});
+
+// ── Merge helper (latest updated_at wins) ─────────────────
+
 const mergeById = (local, remote) => {
   const map = {};
   [...local, ...remote].forEach((item) => {
     const existing = map[item.id];
     if (!existing) { map[item.id] = item; return; }
     const existingTs = existing.updated_at || existing.createdAt || '0';
-    const itemTs = item.updated_at || item.createdAt || '0';
+    const itemTs     = item.updated_at     || item.createdAt     || '0';
     if (itemTs > existingTs) map[item.id] = item;
   });
   return Object.values(map);
 };
 
-// ── Load (called once on app start) ───────────────────────
+// ── Load on login ─────────────────────────────────────────
 
 export const loadAllData = async (localData) => {
-  if (!hasSupabase()) return localData; // offline mode
+  if (!hasSupabase()) return localData;
 
   try {
-    const [workouts, weights, supplements, trtLogs, meta] = await Promise.all([
+    const [wRes, wtRes, sRes, tRes, mRes] = await Promise.all([
       supabase.from('workouts').select('*').eq('user_id', USER_ID),
       supabase.from('weights').select('*').eq('user_id', USER_ID),
       supabase.from('supplements').select('*').eq('user_id', USER_ID),
       supabase.from('trt_logs').select('*').eq('user_id', USER_ID),
-      supabase.from('user_meta').select('*').eq('user_id', USER_ID).single(),
+      supabase.from('user_meta').select('*').eq('user_id', USER_ID).maybeSingle(),
     ]);
 
-    // Merge remote + local for array data (id-based dedup)
+    // Log any errors for debugging
+    if (wRes.error)  console.warn('[db] workouts fetch error:',     wRes.error.message);
+    if (wtRes.error) console.warn('[db] weights fetch error:',      wtRes.error.message);
+    if (sRes.error)  console.warn('[db] supplements fetch error:',  sRes.error.message);
+    if (tRes.error)  console.warn('[db] trt_logs fetch error:',     tRes.error.message);
+    if (mRes.error)  console.warn('[db] user_meta fetch error:',    mRes.error.message);
+
+    const remoteWorkouts    = (wRes.data  || []).map(workoutFromDb);
+    const remoteWeights     = (wtRes.data || []).map(weightFromDb);
+    const remoteSupplements = (sRes.data  || []).map(supplementFromDb);
+    const remoteTrtLogs     = (tRes.data  || []).map(trtFromDb);
+
     const merged = {
-      workouts:    mergeById(localData.workouts    || [], workouts.data    || []),
-      weights:     mergeById(localData.weights     || [], weights.data     || []),
-      supplements: mergeById(localData.supplements || [], supplements.data || []),
-      trtLogs:     mergeById(localData.trtLogs     || [], trtLogs.data     || []),
-      profile:  localData.profile,
-      challenge: localData.challenge,
+      workouts:    mergeById(localData.workouts    || [], remoteWorkouts),
+      weights:     mergeById(localData.weights     || [], remoteWeights),
+      supplements: mergeById(localData.supplements || [], remoteSupplements),
+      trtLogs:     mergeById(localData.trtLogs     || [], remoteTrtLogs),
+      profile:     localData.profile,
+      challenge:   localData.challenge,
     };
 
-    // For profile/challenge: remote wins if it exists and is newer
-    if (meta.data) {
-      const remote = meta.data;
-      if (remote.profile) {
-        const localTs = localData.profile?._updatedAt || '0';
-        const remoteTs = remote.profile_updated_at || '0';
-        if (remoteTs > localTs) merged.profile = remote.profile;
-      }
-      if (remote.challenge) {
-        const localTs = localData.challenge?._updatedAt || '0';
-        const remoteTs = remote.challenge_updated_at || '0';
-        if (remoteTs > localTs) merged.challenge = remote.challenge;
-      }
+    // Profile / challenge: remote wins if it exists and is newer
+    const meta = mRes.data;
+    if (meta?.profile) {
+      const localTs  = localData.profile?._updatedAt  || '0';
+      const remoteTs = meta.profile_updated_at         || '0';
+      if (remoteTs > localTs) merged.profile = meta.profile;
+    }
+    if (meta?.challenge) {
+      const localTs  = localData.challenge?._updatedAt || '0';
+      const remoteTs = meta.challenge_updated_at        || '0';
+      if (remoteTs > localTs) merged.challenge = meta.challenge;
     }
 
     return merged;
   } catch (err) {
-    console.warn('[db] Load failed, using localStorage:', err.message);
+    console.warn('[db] Load failed, falling back to localStorage:', err.message);
     return localData;
   }
 };
 
-// ── Migration (run once to upload existing localStorage data) ─
+// ── Migration ─────────────────────────────────────────────
 
 export const migrateIfNeeded = async (localData) => {
   if (!hasSupabase()) return;
   if (storage.get(MIGRATION_KEY, false)) return;
 
-  const hasLocalData =
-    (localData.workouts?.length > 0) ||
-    (localData.weights?.length > 0) ||
+  const hasData =
+    (localData.workouts?.length    > 0) ||
+    (localData.weights?.length     > 0) ||
     (localData.supplements?.length > 0) ||
-    (localData.trtLogs?.length > 0);
+    (localData.trtLogs?.length     > 0);
 
-  if (!hasLocalData) {
-    // No local data to migrate — just mark done
+  if (!hasData) {
     storage.set(MIGRATION_KEY, true);
     return;
   }
 
-  console.log('[db] Migrating localStorage data to Supabase...');
+  console.log('[db] Running one-time migration of localStorage → Supabase...');
 
   try {
-    const stamp = (items) => items.map((i) => ({ ...i, user_id: USER_ID, updated_at: i.createdAt || now() }));
+    const jobs = [];
 
-    await Promise.all([
-      localData.workouts?.length    && supabase.from('workouts').upsert(stamp(localData.workouts), { onConflict: 'id' }),
-      localData.weights?.length     && supabase.from('weights').upsert(stamp(localData.weights), { onConflict: 'id' }),
-      localData.supplements?.length && supabase.from('supplements').upsert(stamp(localData.supplements), { onConflict: 'id' }),
-      localData.trtLogs?.length     && supabase.from('trt_logs').upsert(stamp(localData.trtLogs), { onConflict: 'id' }),
-    ].filter(Boolean));
+    if (localData.workouts?.length)
+      jobs.push(supabase.from('workouts').upsert(
+        localData.workouts.map(workoutToDb), { onConflict: 'id' }
+      ));
+    if (localData.weights?.length)
+      jobs.push(supabase.from('weights').upsert(
+        localData.weights.map(weightToDb), { onConflict: 'id' }
+      ));
+    if (localData.supplements?.length)
+      jobs.push(supabase.from('supplements').upsert(
+        localData.supplements.map(supplementToDb), { onConflict: 'id' }
+      ));
+    if (localData.trtLogs?.length)
+      jobs.push(supabase.from('trt_logs').upsert(
+        localData.trtLogs.map(trtToDb), { onConflict: 'id' }
+      ));
 
-    // Save profile + challenge into user_meta
-    await syncMeta(localData.profile, localData.challenge);
+    const results = await Promise.all(jobs);
+    const errors  = results.filter((r) => r.error);
+    if (errors.length) {
+      errors.forEach((r) => console.warn('[db] Migration partial error:', r.error.message));
+      // Don't mark done — will retry next login
+      return;
+    }
 
+    await syncMetaInternal(localData.profile, localData.challenge);
     storage.set(MIGRATION_KEY, true);
-    console.log('[db] Migration complete.');
+    console.log('[db] Migration complete ✓');
   } catch (err) {
-    console.warn('[db] Migration failed (will retry next load):', err.message);
+    console.warn('[db] Migration failed, will retry next login:', err.message);
   }
 };
 
-// ── Sync helpers ───────────────────────────────────────────
+// Call this from Settings if migration needs a forced re-run
+export const resetMigration = () => storage.remove(MIGRATION_KEY);
 
-const syncMeta = async (profile, challenge) => {
+// ── Internal meta sync ────────────────────────────────────
+
+const syncMetaInternal = async (profile, challenge) => {
   if (!hasSupabase()) return;
-  try {
-    await supabase.from('user_meta').upsert({
-      user_id: USER_ID,
-      profile,
-      challenge,
-      profile_updated_at: now(),
-      challenge_updated_at: now(),
-    }, { onConflict: 'user_id' });
-  } catch (err) {
-    console.warn('[db] Meta sync failed:', err.message);
-  }
+  const { error } = await supabase.from('user_meta').upsert({
+    user_id:              USER_ID,
+    profile:              profile   ?? null,
+    challenge:            challenge ?? null,
+    profile_updated_at:   now(),
+    challenge_updated_at: now(),
+  }, { onConflict: 'user_id' });
+  if (error) console.warn('[db] Meta sync error:', error.message);
 };
 
-// ── Write helpers (called after each state update) ─────────
+// ── Public write helpers ───────────────────────────────────
 
 export const syncWorkout = async (workout) => {
   if (!hasSupabase()) return;
-  try {
-    await supabase.from('workouts').upsert(
-      { ...workout, user_id: USER_ID, updated_at: now() },
-      { onConflict: 'id' }
-    );
-  } catch (err) { console.warn('[db] Workout sync failed:', err.message); }
+  const { error } = await supabase.from('workouts')
+    .upsert(workoutToDb(workout), { onConflict: 'id' });
+  if (error) console.warn('[db] syncWorkout error:', error.message);
 };
 
 export const deleteWorkout = async (id) => {
   if (!hasSupabase()) return;
-  try {
-    await supabase.from('workouts').delete().eq('id', id).eq('user_id', USER_ID);
-  } catch (err) { console.warn('[db] Workout delete failed:', err.message); }
+  const { error } = await supabase.from('workouts')
+    .delete().eq('id', id).eq('user_id', USER_ID);
+  if (error) console.warn('[db] deleteWorkout error:', error.message);
 };
 
 export const syncWeight = async (weight) => {
   if (!hasSupabase()) return;
-  try {
-    await supabase.from('weights').upsert(
-      { ...weight, user_id: USER_ID, updated_at: now() },
-      { onConflict: 'id' }
-    );
-  } catch (err) { console.warn('[db] Weight sync failed:', err.message); }
+  const { error } = await supabase.from('weights')
+    .upsert(weightToDb(weight), { onConflict: 'id' });
+  if (error) console.warn('[db] syncWeight error:', error.message);
 };
 
 export const deleteWeight = async (id) => {
   if (!hasSupabase()) return;
-  try {
-    await supabase.from('weights').delete().eq('id', id).eq('user_id', USER_ID);
-  } catch (err) { console.warn('[db] Weight delete failed:', err.message); }
+  const { error } = await supabase.from('weights')
+    .delete().eq('id', id).eq('user_id', USER_ID);
+  if (error) console.warn('[db] deleteWeight error:', error.message);
 };
 
 export const syncSupplement = async (supplement) => {
   if (!hasSupabase()) return;
-  try {
-    await supabase.from('supplements').upsert(
-      { ...supplement, user_id: USER_ID, updated_at: now() },
-      { onConflict: 'id' }
-    );
-  } catch (err) { console.warn('[db] Supplement sync failed:', err.message); }
+  const { error } = await supabase.from('supplements')
+    .upsert(supplementToDb(supplement), { onConflict: 'id' });
+  if (error) console.warn('[db] syncSupplement error:', error.message);
 };
 
 export const deleteSupplement = async (id) => {
   if (!hasSupabase()) return;
-  try {
-    await supabase.from('supplements').delete().eq('id', id).eq('user_id', USER_ID);
-  } catch (err) { console.warn('[db] Supplement delete failed:', err.message); }
+  const { error } = await supabase.from('supplements')
+    .delete().eq('id', id).eq('user_id', USER_ID);
+  if (error) console.warn('[db] deleteSupplement error:', error.message);
 };
 
 export const syncTrtLog = async (log) => {
   if (!hasSupabase()) return;
-  try {
-    await supabase.from('trt_logs').upsert(
-      { ...log, user_id: USER_ID, updated_at: now() },
-      { onConflict: 'id' }
-    );
-  } catch (err) { console.warn('[db] TRT sync failed:', err.message); }
+  const { error } = await supabase.from('trt_logs')
+    .upsert(trtToDb(log), { onConflict: 'id' });
+  if (error) console.warn('[db] syncTrtLog error:', error.message);
 };
 
 export const deleteTrtLog = async (id) => {
   if (!hasSupabase()) return;
-  try {
-    await supabase.from('trt_logs').delete().eq('id', id).eq('user_id', USER_ID);
-  } catch (err) { console.warn('[db] TRT delete failed:', err.message); }
+  const { error } = await supabase.from('trt_logs')
+    .delete().eq('id', id).eq('user_id', USER_ID);
+  if (error) console.warn('[db] deleteTrtLog error:', error.message);
 };
 
 export const syncProfile = async (profile, challenge) => {
-  await syncMeta(profile, challenge);
+  await syncMetaInternal(profile, challenge);
 };
-
-// ── Bulk clear (Settings "clear all") ─────────────────────
 
 export const clearAllRemote = async () => {
   if (!hasSupabase()) return;
@@ -224,5 +340,7 @@ export const clearAllRemote = async () => {
       supabase.from('user_meta').delete().eq('user_id', USER_ID),
     ]);
     storage.remove(MIGRATION_KEY);
-  } catch (err) { console.warn('[db] Clear failed:', err.message); }
+  } catch (err) {
+    console.warn('[db] clearAllRemote error:', err.message);
+  }
 };

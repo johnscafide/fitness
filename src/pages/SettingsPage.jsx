@@ -1,15 +1,26 @@
 import { useState, useRef } from 'react';
-import { Download, Upload, Trash2 } from 'lucide-react';
+import { Download, Upload, Trash2, RefreshCw } from 'lucide-react';
 import { downloadFile } from '../storage';
 import { hasSupabase } from '../supabase';
+import { resetMigration, migrateIfNeeded } from '../db';
 
 export default function SettingsPage({
   profile, setProfile, workouts, setWorkouts, weights, setWeights,
   challenge, setChallenge, supplements, setSupplements, trtLogs, setTrtLogs,
   showToast, clearAllRemote,
 }) {
-  const [draft, setDraft] = useState(profile);
+  const [draft, setDraft]     = useState(profile);
+  const [resyncing, setResyncing] = useState(false);
   const fileRef = useRef(null);
+
+  const forceResync = async () => {
+    if (!hasSupabase()) { showToast('Supabase not configured'); return; }
+    setResyncing(true);
+    resetMigration();
+    await migrateIfNeeded({ workouts, weights, supplements, trtLogs, profile, challenge });
+    setResyncing(false);
+    showToast('Re-sync complete — all local data pushed to Supabase');
+  };
 
   const save = () => {
     setProfile({
@@ -148,6 +159,12 @@ export default function SettingsPage({
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           <button className="btn" onClick={exportAll}><Download size={14} /> Export Full Backup (JSON)</button>
           <button className="btn secondary" onClick={() => fileRef.current.click()}><Upload size={14} /> Import Backup</button>
+          {hasSupabase() && (
+            <button className="btn secondary" onClick={forceResync} disabled={resyncing}>
+              <RefreshCw size={14} style={{ animation: resyncing ? 'spin 1s linear infinite' : 'none' }} />
+              {resyncing ? 'Syncing...' : 'Force Re-sync to Supabase'}
+            </button>
+          )}
           <input ref={fileRef} type="file" accept=".json" style={{ display: 'none' }} onChange={importFile} />
         </div>
       </div>

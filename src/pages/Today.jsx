@@ -21,9 +21,11 @@ export default function Today({ workouts, weights, supplements, trtLogs, profile
   const isTrtDay = dayOfWeek === 4 || dayOfWeek === 3;
   const trtLoggedToday = (trtLogs || []).some((t) => t.date === today);
 
-  // Default supplement checklist
+  // Default supplement checklist — partial match so "Magnesium" matches "Magnesium Glycinate" etc.
   const DEFAULT_SUPPS = ['Vitamin D3+K2', 'Magnesium'];
-  const suppChecked = (name) => todaySupps.some((s) => s.name === name);
+  const suppChecked = (name) => todaySupps.some((s) =>
+    s.name.toLowerCase().includes(name.toLowerCase())
+  );
 
   // Challenges
   const cStats = useMemo(

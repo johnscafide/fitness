@@ -18,7 +18,7 @@ export default function Today({ workouts, weights, supplements, trtLogs, profile
 
   // Is today a TRT day? (Thursday = 4, Wednesday = 3)
   const dayOfWeek = new Date().getDay();
-  const isTrtDay = dayOfWeek === 4 || dayOfWeek === 3;
+  const isTrtDay = dayOfWeek === 4 || dayOfWeek === 4;
   const trtLoggedToday = (trtLogs || []).some((t) => t.date === today);
 
   // Default supplement checklist — partial match so "Magnesium" matches "Magnesium Glycinate" etc.

@@ -65,7 +65,7 @@ export default function TRTTracker({ trtLogs, setTrtLogs, syncTrtLog, deleteTrtL
 
   const today      = todayISO();
   const dayOfWeek  = new Date().getDay();
-  const isTrtDay   = dayOfWeek === 4 || dayOfWeek === 3;
+  const isTrtDay = dayOfWeek === 4; // Assuming Thursday is the injection day
   const loggedToday = trtLogs.some((t) => t.date === today);
 
   return (

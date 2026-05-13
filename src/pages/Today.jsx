@@ -23,7 +23,7 @@ export default function Today({ workouts, weights, supplements, trtLogs, profile
   const loggedWeightToday = weights.some((w) => w.date === today);
 
   const dayOfWeek    = new Date().getDay();
-  const isTrtDay     = dayOfWeek === 5 || dayOfWeek === 3;
+  const isTrtDay     = dayOfWeek === 4; // Thursday
   const trtLoggedToday = (trtLogs || []).some((t) => t.date === today);
 
   const DEFAULT_SUPPS = ['Vitamin D3+K2', 'Magnesium'];

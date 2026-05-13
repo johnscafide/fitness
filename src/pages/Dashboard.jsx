@@ -18,7 +18,7 @@ export default function Dashboard({ workouts, weights, supplements, trtLogs, pro
 
   // Today supplement status
   const todaySupps = (supplements || []).filter((s) => s.date === today).length;
-  const isTrtDay = [3, 4].includes(new Date().getDay());
+  const isTrtDay = [4].includes(new Date().getDay());
   const trtToday = (trtLogs || []).some((t) => t.date === today);
 
   // Last 30 days

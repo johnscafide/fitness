@@ -4,6 +4,7 @@ import { todayISO, fmtNum } from '../storage';
 import {
   getTodayChallenges, getWeeklyChallenges, getMonthlyChallenges,
   getActiveEventChallenges, computeChallengeStats,
+  evalCheck, evalProgress,
   recordChallengeComplete, importDLCPack, validateDLCPack, SAMPLE_DLC_PACK,
 } from '../challenges';
 
@@ -13,21 +14,21 @@ export default function Today({ workouts, weights, supplements, trtLogs, profile
   const dateStr = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
   const fileRef = useRef(null);
 
-  const todayWorkouts = workouts.filter((w) => w.date === today);
-  const todayCals     = todayWorkouts.reduce((s, w) => s + (Number(w.calories) || 0), 0);
-  const todayMins     = todayWorkouts.reduce((s, w) => s + (Number(w.minutes)  || 0), 0);
-  const hitGoal       = todayCals >= (profile.dailyCalorieGoal || 300);
-  const goalPct       = Math.min(100, profile.dailyCalorieGoal ? (todayCals / profile.dailyCalorieGoal) * 100 : 0);
+  const todayWorkouts  = workouts.filter((w) => w.date === today);
+  const todayCals      = todayWorkouts.reduce((s, w) => s + (Number(w.calories) || 0), 0);
+  const todayMins      = todayWorkouts.reduce((s, w) => s + (Number(w.minutes)  || 0), 0);
+  const hitGoal        = todayCals >= (profile.dailyCalorieGoal || 300);
+  const goalPct        = Math.min(100, profile.dailyCalorieGoal ? (todayCals / profile.dailyCalorieGoal) * 100 : 0);
 
-  const todaySupps       = useMemo(() => supplements.filter((s) => s.date === today), [supplements, today]);
+  const todaySupps        = useMemo(() => supplements.filter((s) => s.date === today), [supplements, today]);
   const loggedWeightToday = weights.some((w) => w.date === today);
 
-  const dayOfWeek    = new Date().getDay();
-  const isTrtDay     = dayOfWeek === 4; // Thursday
+  const dayOfWeek      = new Date().getDay();
+  const isTrtDay       = dayOfWeek === 4;   // Thursday only
   const trtLoggedToday = (trtLogs || []).some((t) => t.date === today);
 
   const DEFAULT_SUPPS = ['Vitamin D3+K2', 'Magnesium'];
-  const suppChecked = (name) => todaySupps.some((s) =>
+  const suppChecked   = (name) => todaySupps.some((s) =>
     s.name.toLowerCase().includes(name.toLowerCase())
   );
 
@@ -36,17 +37,17 @@ export default function Today({ workouts, weights, supplements, trtLogs, profile
     [workouts, weights, supplements, trtLogs, profile]
   );
 
-  const dailyChallenges  = useMemo(() => getTodayChallenges(),    [today]);
-  const weeklyChallenges = useMemo(() => getWeeklyChallenges(),   [today]);
-  const monthlyChallenges = useMemo(() => getMonthlyChallenges(), [today]);
-  const eventChallenges  = useMemo(() => getActiveEventChallenges(), [today]);
+  const dailyChallenges   = useMemo(() => getTodayChallenges(),       [today]);
+  const weeklyChallenges  = useMemo(() => getWeeklyChallenges(),      [today]);
+  const monthlyChallenges = useMemo(() => getMonthlyChallenges(),     [today]);
+  const eventChallenges   = useMemo(() => getActiveEventChallenges(), [today]);
 
-  // Record completions into lifetime history
+  // Record completed challenges to lifetime history
   useMemo(() => {
     [...dailyChallenges, ...weeklyChallenges, ...monthlyChallenges, ...eventChallenges].forEach((c) => {
-      if (c.check && c.check(cStats)) {
-        recordChallengeComplete(c.id, c.name, today);
-      }
+      try {
+        if (evalCheck(c.check, cStats)) recordChallengeComplete(c.id, c.name, today);
+      } catch { /* never crash on a bad DLC challenge */ }
     });
   }, [cStats]);
 
@@ -57,7 +58,7 @@ export default function Today({ workouts, weights, supplements, trtLogs, profile
     const reader = new FileReader();
     reader.onload = (ev) => {
       try {
-        const pack = JSON.parse(ev.target.result);
+        const pack   = JSON.parse(ev.target.result);
         const errors = validateDLCPack(pack);
         if (errors.length) { showToast('Invalid pack: ' + errors[0]); return; }
         importDLCPack(pack);
@@ -126,9 +127,9 @@ export default function Today({ workouts, weights, supplements, trtLogs, profile
         <div className="card">
           <div className="section-title">Daily Checklist</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <CheckItem label="Logged a workout" done={todayWorkouts.length > 0} onClick={() => setPage('log')} />
+            <CheckItem label="Logged a workout"    done={todayWorkouts.length > 0} onClick={() => setPage('log')} />
             <CheckItem label="Hit calorie burn goal" done={hitGoal} sub={`${fmtNum(todayCals)} / ${profile.dailyCalorieGoal} cal`} />
-            <CheckItem label="Weighed in today" done={loggedWeightToday} onClick={() => setPage('weight')} />
+            <CheckItem label="Weighed in today"    done={loggedWeightToday}        onClick={() => setPage('weight')} />
             {DEFAULT_SUPPS.map((name) => (
               <CheckItem key={name} label={name} done={suppChecked(name)} onClick={() => setPage('supplements')} />
             ))}
@@ -173,50 +174,44 @@ export default function Today({ workouts, weights, supplements, trtLogs, profile
         </div>
       </div>
 
-      {/* ── EVENT CHALLENGES (Sprint to Summer etc.) ── */}
+      {/* Event challenges */}
       {eventChallenges.length > 0 && (
         <>
           <div className="section-title">Active Event Challenges</div>
-          <div style={{ marginBottom: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 24 }}>
             {eventChallenges.map((c) => (
-              <EventChallengeCard key={c.id} challenge={c} stats={cStats} />
+              <SafeEventCard key={c.id} challenge={c} stats={cStats} />
             ))}
           </div>
         </>
       )}
 
-      {/* ── DAILY ── */}
+      {/* Daily */}
       <div className="section-title">Today's Challenges</div>
       <div className="grid grid-3" style={{ marginBottom: 24 }}>
-        {dailyChallenges.map((c) => (
-          <ChallengeCard key={c.id} challenge={c} stats={cStats} period="Daily" />
-        ))}
+        {dailyChallenges.map((c) => <SafeChallengeCard key={c.id} challenge={c} stats={cStats} period="Daily" />)}
       </div>
 
-      {/* ── WEEKLY ── */}
+      {/* Weekly */}
       <div className="section-title">This Week's Challenges</div>
       <div className="grid grid-3" style={{ marginBottom: 24 }}>
-        {weeklyChallenges.map((c) => (
-          <ChallengeCard key={c.id} challenge={c} stats={cStats} period="Weekly" />
-        ))}
+        {weeklyChallenges.map((c) => <SafeChallengeCard key={c.id} challenge={c} stats={cStats} period="Weekly" />)}
       </div>
 
-      {/* ── MONTHLY ── */}
+      {/* Monthly */}
       <div className="section-title">This Month's Challenges</div>
       <div className="grid grid-3" style={{ marginBottom: 24 }}>
-        {monthlyChallenges.map((c) => (
-          <ChallengeCard key={c.id} challenge={c} stats={cStats} period="Monthly" />
-        ))}
+        {monthlyChallenges.map((c) => <SafeChallengeCard key={c.id} challenge={c} stats={cStats} period="Monthly" />)}
       </div>
 
-      {/* ── DLC IMPORT ── */}
+      {/* DLC import */}
       <div className="card" style={{ borderColor: 'rgba(198,255,61,0.2)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 16 }}>
           <div>
             <div className="section-title">Challenge DLC Packs</div>
             <div style={{ fontSize: 13, color: 'var(--text-dim)', lineHeight: 1.5, maxWidth: 500 }}>
-              Import downloadable challenge packs to add seasonal events, special challenges, and more.
-              New packs will be released throughout the year. All completed challenges are saved to your lifetime history.
+              Import downloadable challenge packs to add seasonal events and special challenges.
+              All completed challenges are saved to your lifetime history.
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -234,11 +229,31 @@ export default function Today({ workouts, weights, supplements, trtLogs, profile
   );
 }
 
-// ── Challenge card with inline progress tracker ───────────
-function ChallengeCard({ challenge, stats, period }) {
-  const done = challenge.check ? challenge.check(stats) : false;
-  const prog = challenge.progress ? challenge.progress(stats) : null;
-  const pct  = prog ? Math.min(100, prog.target > 0 ? (prog.current / prog.target) * 100 : 0) : null;
+// ── Safe wrappers — catch any runtime error from bad DLC ──
+
+function SafeChallengeCard({ challenge, stats, period }) {
+  try {
+    const done = evalCheck(challenge.check, stats);
+    const prog = evalProgress(challenge.progress, stats);
+    return <ChallengeCard challenge={challenge} done={done} prog={prog} period={period} />;
+  } catch {
+    return null; // silently drop broken DLC challenges
+  }
+}
+
+function SafeEventCard({ challenge, stats }) {
+  try {
+    const done = evalCheck(challenge.check, stats);
+    const prog = evalProgress(challenge.progress, stats);
+    return <EventChallengeCard challenge={challenge} done={done} prog={prog} />;
+  } catch {
+    return null;
+  }
+}
+
+// ── Challenge card with progress bar ─────────────────────
+function ChallengeCard({ challenge, done, prog, period }) {
+  const pct = prog ? Math.min(100, prog.target > 0 ? (prog.current / prog.target) * 100 : 0) : null;
 
   const fmt = (n, f) => {
     if (f === '0.00') return Number(n).toFixed(2);
@@ -249,15 +264,14 @@ function ChallengeCard({ challenge, stats, period }) {
   return (
     <div className="card" style={{
       borderColor: done ? 'var(--accent)' : challenge.dlc ? 'rgba(77,159,255,0.3)' : 'var(--border)',
-      background: done ? 'linear-gradient(135deg, var(--bg-2), rgba(198,255,61,0.06))' : 'var(--bg-2)',
+      background:  done ? 'linear-gradient(135deg, var(--bg-2), rgba(198,255,61,0.06))' : 'var(--bg-2)',
       transition: 'all 0.2s',
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
         <span style={{ fontSize: 28 }}>{challenge.icon}</span>
         <span style={{
-          fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: 2,
+          fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: 2, textTransform: 'uppercase',
           color: done ? 'var(--accent)' : challenge.dlc ? 'var(--info)' : 'var(--text-mute)',
-          textTransform: 'uppercase',
           border: `1px solid ${done ? 'rgba(198,255,61,0.4)' : challenge.dlc ? 'rgba(77,159,255,0.3)' : 'var(--border)'}`,
           padding: '2px 6px',
         }}>
@@ -272,8 +286,7 @@ function ChallengeCard({ challenge, stats, period }) {
         {challenge.desc}
       </div>
 
-      {/* Progress tracker */}
-      {prog && (
+      {prog && pct !== null && (
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
             <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: done ? 'var(--accent)' : 'var(--text-dim)' }}>
@@ -285,8 +298,7 @@ function ChallengeCard({ challenge, stats, period }) {
           </div>
           <div style={{ height: 4, background: 'var(--bg)', border: '1px solid var(--border)', overflow: 'hidden' }}>
             <div style={{
-              height: '100%',
-              width: `${pct}%`,
+              height: '100%', width: `${pct}%`,
               background: done ? 'var(--accent)' : 'var(--info)',
               transition: 'width 0.4s ease',
             }} />
@@ -297,14 +309,11 @@ function ChallengeCard({ challenge, stats, period }) {
   );
 }
 
-// ── Event challenge card (wide, more prominent) ───────────
-function EventChallengeCard({ challenge, stats }) {
-  const done = challenge.check ? challenge.check(stats) : false;
-  const prog = challenge.progress ? challenge.progress(stats) : null;
-  const pct  = prog ? Math.min(100, prog.target > 0 ? (prog.current / prog.target) * 100 : 0) : null;
-
-  const today = todayISO();
-  const end   = challenge.period?.end;
+// ── Event challenge card (wide, prominent) ────────────────
+function EventChallengeCard({ challenge, done, prog }) {
+  const pct      = prog ? Math.min(100, prog.target > 0 ? (prog.current / prog.target) * 100 : 0) : null;
+  const today    = todayISO();
+  const end      = challenge.period?.end;
   const daysLeft = end
     ? Math.max(0, Math.round((new Date(end + 'T00:00:00') - new Date(today + 'T00:00:00')) / 86400000))
     : null;
@@ -312,12 +321,13 @@ function EventChallengeCard({ challenge, stats }) {
   return (
     <div className="card" style={{
       borderColor: done ? 'var(--accent)' : 'rgba(255,176,32,0.5)',
-      background: done
+      background:  done
         ? 'linear-gradient(135deg, var(--bg-2), rgba(198,255,61,0.06))'
         : 'linear-gradient(135deg, var(--bg-2), rgba(255,176,32,0.05))',
     }}>
       <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
         <div style={{ fontSize: 40 }}>{challenge.icon}</div>
+
         <div style={{ flex: 1, minWidth: 200 }}>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 4, flexWrap: 'wrap' }}>
             <div style={{ fontFamily: 'var(--display)', fontSize: 26, letterSpacing: 1 }}>{challenge.name}</div>
@@ -334,19 +344,19 @@ function EventChallengeCard({ challenge, stats }) {
               }}>✓ Complete</span>
             )}
           </div>
+
           <div style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 12, lineHeight: 1.5 }}>
             {challenge.desc}
           </div>
 
-          {prog && (
+          {prog && pct !== null && (
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
                 <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: done ? 'var(--accent)' : 'var(--text-dim)' }}>
                   {Math.round(prog.current).toLocaleString()} / {Math.round(prog.target).toLocaleString()} {prog.unit}
                 </span>
                 <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: done ? 'var(--accent)' : 'var(--text-mute)' }}>
-                  {Math.round(pct)}%
-                  {!done && daysLeft !== null && ` · ${daysLeft}d left`}
+                  {Math.round(pct)}%{!done && daysLeft !== null ? ` · ${daysLeft}d left` : ''}
                 </span>
               </div>
               <div style={{ height: 8, background: 'var(--bg)', border: '1px solid var(--border)', overflow: 'hidden' }}>
@@ -366,7 +376,7 @@ function EventChallengeCard({ challenge, stats }) {
           )}
         </div>
 
-        {/* Right: calorie needed per day to finish */}
+        {/* Calories/day needed to finish */}
         {prog && !done && daysLeft > 0 && (
           <div style={{ textAlign: 'right' }}>
             <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--text-mute)', marginBottom: 4 }}>NEEDED/DAY</div>

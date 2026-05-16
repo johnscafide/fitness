@@ -3,6 +3,7 @@ import {
   LayoutDashboard, Plus, Scale, Target, Trophy, Award,
   LogOut, Settings, Activity, BarChart2, Pill, Syringe, Sun,
   Wifi, WifiOff, RefreshCw, BookOpen, FlaskConical, CalendarCheck, Moon,
+  Map, Camera, Calendar, BarChart, User, ArrowLeftRight,
 } from 'lucide-react';
 import { storage, todayISO } from './storage';
 import { hasSupabase } from './supabase';
@@ -14,74 +15,92 @@ import {
   syncTrtLog, deleteTrtLog,
   syncProfile, clearAllRemote,
 } from './db';
-import { getRestAdvice } from './restIntelligence';
+import { getRestAdvice }   from './restIntelligence';
+import { VersionBadge }    from './changelog.jsx';
+import { WeatherWidget }   from './weather.jsx';
 
-import Dashboard    from './pages/Dashboard';
-import Today        from './pages/Today';
-import LogWorkout   from './pages/LogWorkout';
-import WeightTracker from './pages/WeightTracker';
-import GoalPlanner  from './pages/GoalPlanner';
-import Records      from './pages/Records';
-import Badges       from './pages/Badges';
-import History      from './pages/History';
-import SettingsPage from './pages/SettingsPage';
-import Analytics    from './pages/Analytics';
-import Supplements  from './pages/Supplements';
-import TRTTracker   from './pages/TRTTracker';
-import WeeklyReview from './pages/WeeklyReview';
-import Journal      from './pages/Journal';
-import LabResults   from './pages/LabResults';
+import Dashboard          from './pages/Dashboard';
+import Today              from './pages/Today';
+import LogWorkout         from './pages/LogWorkout';
+import WeightTracker      from './pages/WeightTracker';
+import GoalPlanner        from './pages/GoalPlanner';
+import Records            from './pages/Records';
+import Badges             from './pages/Badges';
+import History            from './pages/History';
+import SettingsPage       from './pages/SettingsPage';
+import Analytics          from './pages/Analytics';
+import Supplements        from './pages/Supplements';
+import TRTTracker         from './pages/TRTTracker';
+import WeeklyReview       from './pages/WeeklyReview';
+import Journal            from './pages/Journal';
+import LabResults         from './pages/LabResults';
+import JourneyMap         from './pages/JourneyMap';
+import ProgressPhotos     from './pages/ProgressPhotos';
+import ActivityCalendar   from './pages/ActivityCalendar';
+import ProgressComparison from './pages/ProgressComparison';
 
 const PASSWORD = 'fitness';
 
 const DEFAULT_PROFILE = {
   name: 'John', heightFt: 5, heightIn: 10, age: 40, sex: 'male',
   dailyCalorieGoal: 300, activityLevel: 'light',
+  displayName: '', photoB64: '',
 };
 const DEFAULT_CHALLENGE = {
   startDate: todayISO(), months: 3, startWeight: null, goalWeight: null,
 };
 
-// ── Theme helpers ─────────────────────────────────────────
+// ── Theme ─────────────────────────────────────────────────
 const LIGHT_VARS = `
   :root {
-    --bg: #f4f4f4;
-    --bg-2: #ffffff;
-    --bg-3: #ebebeb;
-    --border: #d8d8d8;
-    --border-2: #c8c8c8;
-    --text: #111111;
-    --text-dim: #444444;
-    --text-mute: #888888;
-    --accent: #5a9e00;
-    --accent-2: #4a8400;
-    --danger: #cc2222;
-    --warn: #c47a00;
-    --info: #1a6ebb;
+    --bg:#f2f2f2;--bg-2:#ffffff;--bg-3:#e8e8e8;
+    --border:#d0d0d0;--border-2:#bbb;
+    --text:#111;--text-dim:#444;--text-mute:#888;
+    --accent:#5a9e00;--accent-2:#4a8400;
+    --danger:#cc2222;--warn:#c47a00;--info:#1a6ebb;
   }
-  body { background: #f4f4f4; }
-  .login-screen { background: #f4f4f4; }
+  body{background:#f2f2f2;}
+  .login-screen{background:#f2f2f2;}
 `;
 
 const applyTheme = (dark) => {
-  const existing = document.getElementById('theme-override');
-  if (existing) existing.remove();
+  const old = document.getElementById('theme-override');
+  if (old) old.remove();
   if (!dark) {
-    const style = document.createElement('style');
-    style.id = 'theme-override';
-    style.textContent = LIGHT_VARS;
-    document.head.appendChild(style);
+    const s = document.createElement('style');
+    s.id = 'theme-override';
+    s.textContent = LIGHT_VARS;
+    document.head.appendChild(s);
   }
 };
 
+// ── Animated counter ──────────────────────────────────────
+function AnimatedNumber({ target, decimals = 1, duration = 1200 }) {
+  const [val, setVal] = useState(0);
+  useEffect(() => {
+    if (!target) return;
+    const start = Date.now();
+    const tick = () => {
+      const elapsed = Date.now() - start;
+      const progress = Math.min(elapsed / duration, 1);
+      // Ease out cubic
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setVal(target * eased);
+      if (progress < 1) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }, [target]);
+  return <>{val.toFixed(decimals)}</>;
+}
+
 export default function App() {
-  const [authed,     setAuthed]     = useState(() => storage.get('auth', false));
-  const [page,       setPage]       = useState('today');
-  const [toast,      setToast]      = useState('');
-  const [syncing,    setSyncing]    = useState(false);
-  const [syncError,  setSyncError]  = useState(false);
-  const [loaded,     setLoaded]     = useState(false);
-  const [darkMode,   setDarkMode]   = useState(() => storage.get('darkMode', true));
+  const [authed,    setAuthed]    = useState(() => storage.get('auth', false));
+  const [page,      setPage]      = useState('today');
+  const [toast,     setToast]     = useState('');
+  const [syncing,   setSyncing]   = useState(false);
+  const [syncError, setSyncError] = useState(false);
+  const [loaded,    setLoaded]    = useState(false);
+  const [darkMode,  setDarkMode]  = useState(() => storage.get('darkMode', true));
 
   const [workouts,    setWorkoutsRaw]    = useState(() => storage.get('workouts', []));
   const [weights,     setWeightsRaw]     = useState(() => storage.get('weights', []));
@@ -90,9 +109,7 @@ export default function App() {
   const [profile,     setProfileRaw]     = useState(() => storage.get('profile', DEFAULT_PROFILE));
   const [challenge,   setChallengeRaw]   = useState(() => storage.get('challenge', DEFAULT_CHALLENGE));
 
-  // Apply theme on mount and on change
   useEffect(() => { applyTheme(darkMode); storage.set('darkMode', darkMode); }, [darkMode]);
-
   useEffect(() => storage.set('workouts',    workouts),    [workouts]);
   useEffect(() => storage.set('weights',     weights),     [weights]);
   useEffect(() => storage.set('supplements', supplements), [supplements]);
@@ -105,7 +122,7 @@ export default function App() {
     if (!hasSupabase()) { setLoaded(true); return; }
     setSyncing(true); setSyncError(false);
     try {
-      const localData = {
+      const local = {
         workouts:    storage.get('workouts', []),
         weights:     storage.get('weights', []),
         supplements: storage.get('supplements', []),
@@ -113,8 +130,8 @@ export default function App() {
         profile:     storage.get('profile', DEFAULT_PROFILE),
         challenge:   storage.get('challenge', DEFAULT_CHALLENGE),
       };
-      await migrateIfNeeded(localData);
-      const merged = await loadAllData(localData);
+      await migrateIfNeeded(local);
+      const merged = await loadAllData(local);
       setWorkoutsRaw(merged.workouts);
       setWeightsRaw(merged.weights);
       setSupplementsRaw(merged.supplements);
@@ -131,12 +148,12 @@ export default function App() {
 
   useEffect(() => { if (authed) loadFromSupabase(); else setLoaded(false); }, [authed]);
 
-  const setWorkouts    = (next) => setWorkoutsRaw(typeof next === 'function' ? next(workouts) : next);
-  const setWeights     = (val)  => setWeightsRaw(val);
-  const setSupplements = (val)  => setSupplementsRaw(val);
-  const setTrtLogs     = (val)  => setTrtLogsRaw(val);
-  const setProfile     = (val)  => { setProfileRaw(val);   syncProfile(val, challenge); };
-  const setChallenge   = (val)  => { setChallengeRaw(val); syncProfile(profile, val);  };
+  const setWorkouts    = (n)   => setWorkoutsRaw(typeof n === 'function' ? n(workouts) : n);
+  const setWeights     = (v)   => setWeightsRaw(v);
+  const setSupplements = (v)   => setSupplementsRaw(v);
+  const setTrtLogs     = (v)   => setTrtLogsRaw(v);
+  const setProfile     = (v)   => { setProfileRaw(v);   syncProfile(v, challenge); };
+  const setChallenge   = (v)   => { setChallengeRaw(v); syncProfile(profile, v);  };
 
   const toastTimer = useRef(null);
   const showToast  = (msg) => {
@@ -153,9 +170,17 @@ export default function App() {
     return Number([...weights].sort((a, b) => b.date.localeCompare(a.date))[0].weight);
   }, [weights]);
 
+  // Weight loss = earliest logged weight minus current
+  const weightLost = useMemo(() => {
+    if (weights.length < 2) return null;
+    const sorted = [...weights].sort((a, b) => a.date.localeCompare(b.date));
+    const diff = Number(sorted[0].weight) - Number(sorted[sorted.length - 1].weight);
+    return diff > 0 ? diff : null;
+  }, [weights]);
+
   const restAdvice = useMemo(() => getRestAdvice(workouts), [workouts]);
 
-  if (!authed) return <Login onLogin={handleLogin} darkMode={darkMode} />;
+  if (!authed) return <Login onLogin={handleLogin} />;
   if (!loaded) return <LoadingScreen syncing={syncing} />;
 
   const trtAlert = new Date().getDay() === 4 && !trtLogs.some((t) => t.date === todayISO());
@@ -165,9 +190,13 @@ export default function App() {
     { id: 'dashboard',   label: 'Dashboard',      icon: LayoutDashboard },
     { id: 'log',         label: 'Log Workout',    icon: Plus },
     { id: 'history',     label: 'History',        icon: Activity },
+    { id: 'calendar',    label: 'Calendar',       icon: Calendar },
     { id: 'weight',      label: 'Weight',         icon: Scale },
     { id: 'analytics',   label: 'Analytics',      icon: BarChart2 },
+    { id: 'compare',     label: 'Compare',        icon: ArrowLeftRight },
     { id: 'goal',        label: 'Goal Planner',   icon: Target },
+    { id: 'journey',     label: 'Journey Map',    icon: Map },
+    { id: 'photos',      label: 'Progress Photos',icon: Camera },
     { id: 'records',     label: 'Records',        icon: Trophy },
     { id: 'badges',      label: 'Badges',         icon: Award },
     { id: 'supplements', label: 'Supplements',    icon: Pill },
@@ -188,21 +217,65 @@ export default function App() {
     clearAllRemote,
   };
 
+  const displayName  = profile.displayName || profile.name || 'Hybrid Hustler';
+  const photoB64     = profile.photoB64 || '';
+
   return (
     <div className="app">
       <aside className="sidebar">
-        <div className="sidebar-brand">
-          <h1>HYBRID<br /><span>HUSTLER</span></h1>
-          <p>Fitness OS</p>
+        {/* Brand / Profile */}
+        <div className="sidebar-brand" style={{ paddingBottom: 16 }}>
+          {/* Photo + name row */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+            {photoB64 ? (
+              <img src={photoB64} alt="Profile"
+                style={{ width: 44, height: 44, borderRadius: '50%', objectFit: 'cover', border: '2px solid var(--accent)', flexShrink: 0 }} />
+            ) : (
+              <div style={{
+                width: 44, height: 44, borderRadius: '50%',
+                background: 'var(--bg-3)', border: '2px solid var(--border)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+              }}>
+                <User size={22} color="var(--text-mute)" />
+              </div>
+            )}
+            <div style={{ minWidth: 0 }}>
+              <h1 style={{ fontFamily: 'var(--display)', fontSize: 18, letterSpacing: 1, lineHeight: 1.1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {displayName.toUpperCase()}
+              </h1>
+              <p style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: 2, color: 'var(--text-mute)', marginTop: 2, textTransform: 'uppercase' }}>
+                Fitness OS
+              </p>
+            </div>
+          </div>
+
+          {/* Weight loss counter */}
+          {weightLost !== null && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              background: 'rgba(198,255,61,0.08)', border: '1px solid rgba(198,255,61,0.25)',
+              padding: '6px 10px',
+            }}>
+              <span style={{ fontSize: 16 }}>📉</span>
+              <div>
+                <div style={{ fontFamily: 'var(--display)', fontSize: 22, color: 'var(--accent)', lineHeight: 1, letterSpacing: 1 }}>
+                  <AnimatedNumber target={weightLost} decimals={1} /> lbs
+                </div>
+                <div style={{ fontFamily: 'var(--mono)', fontSize: 9, color: 'var(--text-mute)', letterSpacing: 1, textTransform: 'uppercase' }}>
+                  lost so far
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         <nav style={{ flex: 1, overflowY: 'auto' }}>
           {nav.map((n) => (
             <button key={n.id} className={`nav-item ${page === n.id ? 'active' : ''}`} onClick={() => setPage(n.id)}>
-              <n.icon size={18} />
+              <n.icon size={16} />
               {n.label}
               {n.alert && (
-                <span style={{ marginLeft: 'auto', width: 8, height: 8, borderRadius: '50%', background: 'var(--warn)', flexShrink: 0 }} />
+                <span style={{ marginLeft: 'auto', width: 7, height: 7, borderRadius: '50%', background: 'var(--warn)', flexShrink: 0 }} />
               )}
             </button>
           ))}
@@ -212,68 +285,78 @@ export default function App() {
           {/* Rest intelligence */}
           {restAdvice && (
             <div style={{
-              padding: '10px 12px', marginBottom: 12,
+              padding: '8px 10px', marginBottom: 10,
               background: 'var(--bg-3)', border: `1px solid ${restAdvice.color}33`,
               borderLeft: `3px solid ${restAdvice.color}`,
             }}>
-              <div style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: 1, color: restAdvice.color, marginBottom: 3 }}>
-                {restAdvice.icon} {restAdvice.title.toUpperCase()}
+              <div style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: 1, color: restAdvice.color, marginBottom: 2, textTransform: 'uppercase' }}>
+                {restAdvice.icon} {restAdvice.title}
               </div>
-              <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--text-dim)', lineHeight: 1.4 }}>
+              <div style={{ fontFamily: 'var(--mono)', fontSize: 9, color: 'var(--text-dim)', lineHeight: 1.4 }}>
                 {restAdvice.message}
               </div>
             </div>
           )}
 
-          {/* Dark / Light toggle */}
-          <button
-            onClick={() => setDarkMode(!darkMode)}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 8, width: '100%',
-              fontFamily: 'var(--mono)', fontSize: 11, letterSpacing: 1,
-              color: 'var(--text-mute)', padding: '8px 0', marginBottom: 8,
-              background: 'none', border: 'none', cursor: 'pointer',
-              textTransform: 'uppercase', transition: 'color 0.15s',
-            }}
-          >
-            {darkMode ? <Sun size={13} /> : <Moon size={13} />}
+          {/* Dark/light */}
+          <button onClick={() => setDarkMode(!darkMode)} style={{
+            display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+            fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: 1,
+            color: 'var(--text-mute)', padding: '6px 0', marginBottom: 6,
+            background: 'none', border: 'none', cursor: 'pointer',
+            textTransform: 'uppercase', transition: 'color 0.15s',
+          }}>
+            {darkMode ? <Sun size={12} /> : <Moon size={12} />}
             {darkMode ? 'Light Mode' : 'Dark Mode'}
           </button>
 
-          {/* Sync status */}
+          {/* Sync */}
           <div style={{
-            display: 'flex', alignItems: 'center', gap: 8,
-            fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: 1,
-            color: syncError ? 'var(--warn)' : 'var(--text-mute)', marginBottom: 12,
+            display: 'flex', alignItems: 'center', gap: 6,
+            fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: 1,
+            color: syncError ? 'var(--warn)' : 'var(--text-mute)', marginBottom: 8,
           }}>
-            {syncing ? <><RefreshCw size={12} style={{ animation: 'spin 1s linear infinite' }} /> SYNCING</>
-              : syncError ? <><WifiOff size={12} /> OFFLINE</>
-              : hasSupabase() ? <><Wifi size={12} /> SYNCED</>
-              : <><WifiOff size={12} /> LOCAL ONLY</>}
+            {syncing ? <><RefreshCw size={11} style={{ animation: 'spin 1s linear infinite' }} /> SYNCING</>
+              : syncError ? <><WifiOff size={11} /> OFFLINE</>
+              : hasSupabase() ? <><Wifi size={11} /> SYNCED</>
+              : <><WifiOff size={11} /> LOCAL ONLY</>}
           </div>
 
-          <button className="logout-btn" onClick={handleLogout}>
-            <LogOut size={14} /> Sign Out
-          </button>
+          {/* Bottom row: sign out + version */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <button className="logout-btn" onClick={handleLogout}>
+              <LogOut size={13} /> Sign Out
+            </button>
+            <VersionBadge />
+          </div>
         </div>
       </aside>
 
       <main className="main">
-        {page === 'today'       && <Today        {...pageProps} />}
-        {page === 'dashboard'   && <Dashboard    {...pageProps} />}
-        {page === 'log'         && <LogWorkout   {...pageProps} />}
-        {page === 'history'     && <History      {...pageProps} />}
-        {page === 'weight'      && <WeightTracker {...pageProps} />}
-        {page === 'analytics'   && <Analytics    {...pageProps} />}
-        {page === 'goal'        && <GoalPlanner  {...pageProps} />}
-        {page === 'records'     && <Records      {...pageProps} />}
-        {page === 'badges'      && <Badges       {...pageProps} />}
-        {page === 'supplements' && <Supplements  {...pageProps} />}
-        {page === 'trt'         && <TRTTracker   {...pageProps} />}
-        {page === 'labs'        && <LabResults   {...pageProps} />}
-        {page === 'journal'     && <Journal      {...pageProps} />}
-        {page === 'review'      && <WeeklyReview {...pageProps} />}
-        {page === 'settings'    && <SettingsPage {...pageProps} />}
+        {/* Weather strip on every page */}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+          <WeatherWidget />
+        </div>
+
+        {page === 'today'       && <Today              {...pageProps} />}
+        {page === 'dashboard'   && <Dashboard          {...pageProps} />}
+        {page === 'log'         && <LogWorkout         {...pageProps} />}
+        {page === 'history'     && <History            {...pageProps} />}
+        {page === 'calendar'    && <ActivityCalendar   {...pageProps} />}
+        {page === 'weight'      && <WeightTracker      {...pageProps} />}
+        {page === 'analytics'   && <Analytics          {...pageProps} />}
+        {page === 'compare'     && <ProgressComparison {...pageProps} />}
+        {page === 'goal'        && <GoalPlanner        {...pageProps} />}
+        {page === 'journey'     && <JourneyMap         {...pageProps} />}
+        {page === 'photos'      && <ProgressPhotos     {...pageProps} />}
+        {page === 'records'     && <Records            {...pageProps} />}
+        {page === 'badges'      && <Badges             {...pageProps} />}
+        {page === 'supplements' && <Supplements        {...pageProps} />}
+        {page === 'trt'         && <TRTTracker         {...pageProps} />}
+        {page === 'labs'        && <LabResults         {...pageProps} />}
+        {page === 'journal'     && <Journal            {...pageProps} />}
+        {page === 'review'      && <WeeklyReview       {...pageProps} />}
+        {page === 'settings'    && <SettingsPage       {...pageProps} />}
       </main>
 
       {toast && <div className="toast">{toast}</div>}
@@ -304,7 +387,7 @@ function LoadingScreen({ syncing }) {
 }
 
 function Login({ onLogin }) {
-  const [pw, setPw]     = useState('');
+  const [pw, setPw]       = useState('');
   const [error, setError] = useState('');
   const submit = (e) => {
     e.preventDefault();

@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { Download, Upload, Trash2, RefreshCw } from 'lucide-react';
+import { Download, Upload, Trash2, RefreshCw, Camera } from 'lucide-react';
 import { downloadFile } from '../storage';
 import { hasSupabase } from '../supabase';
 import { resetMigration, migrateIfNeeded } from '../db';
@@ -9,9 +9,23 @@ export default function SettingsPage({
   challenge, setChallenge, supplements, setSupplements, trtLogs, setTrtLogs,
   showToast, clearAllRemote,
 }) {
-  const [draft, setDraft]     = useState(profile);
+  const [draft, setDraft]         = useState(profile);
   const [resyncing, setResyncing] = useState(false);
-  const fileRef = useRef(null);
+  const fileRef   = useRef(null);
+  const photoRef  = useRef(null);
+
+  const handlePhotoUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) { showToast('Photo too large — max 2MB for sidebar'); return; }
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      setDraft((d) => ({ ...d, photoB64: ev.target.result }));
+      showToast('Photo loaded — save profile to apply');
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
 
   const forceResync = async () => {
     if (!hasSupabase()) { showToast('Supabase not configured'); return; }
@@ -105,6 +119,10 @@ export default function SettingsPage({
             <input value={draft.name || ''} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
           </div>
           <div className="form-group">
+            <label>Display Name (shown in sidebar)</label>
+            <input value={draft.displayName || ''} onChange={(e) => setDraft({ ...draft, displayName: e.target.value })} placeholder={draft.name || 'Your name'} />
+          </div>
+          <div className="form-group">
             <label>Age</label>
             <input type="number" value={draft.age || ''} onChange={(e) => setDraft({ ...draft, age: e.target.value })} />
           </div>
@@ -129,7 +147,31 @@ export default function SettingsPage({
             <input type="number" value={draft.dailyCalorieGoal || ''} onChange={(e) => setDraft({ ...draft, dailyCalorieGoal: e.target.value })} />
           </div>
         </div>
-        <button className="btn" onClick={save} style={{ marginTop: 16 }}>Save Profile</button>
+        {/* Profile photo */}
+        <div style={{ marginTop: 16, marginBottom: 16 }}>
+          <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--text-dim)', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 8 }}>Profile Photo</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            {draft.photoB64 ? (
+              <img src={draft.photoB64} alt="Profile" style={{ width: 56, height: 56, borderRadius: '50%', objectFit: 'cover', border: '2px solid var(--accent)' }} />
+            ) : (
+              <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'var(--bg-3)', border: '2px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Camera size={20} color="var(--text-mute)" />
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn secondary small" onClick={() => photoRef.current.click()}>
+                <Camera size={12} /> {draft.photoB64 ? 'Change' : 'Upload'} Photo
+              </button>
+              {draft.photoB64 && (
+                <button className="btn secondary small" onClick={() => setDraft((d) => ({ ...d, photoB64: '' }))}>
+                  Remove
+                </button>
+              )}
+            </div>
+            <input ref={photoRef} type="file" accept="image/jpeg,image/png,image/webp" style={{ display: 'none' }} onChange={handlePhotoUpload} />
+          </div>
+        </div>
+        <button className="btn" onClick={save} style={{ marginTop: 4 }}>Save Profile</button>
       </div>
 
       {/* Sync status */}

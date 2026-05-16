@@ -278,17 +278,6 @@ export const BADGES = [
     desc: 'Log 13 TRT injections (3 months on protocol).',
     check: (s) => s.totalTrtLogs >= 13,
   },
-  {
-    id: 'trt_halfyear', name: 'TRT Master', icon: '6️⃣', category: 'Protocol',
-    desc: 'Log 26 TRT injections (6 months on protocol).',
-    check: (s) => s.totalTrtLogs >= 26,
-  },
-  {
-    id: 'trt_year', name: 'TRT Legend', icon: '🏅', category: 'Protocol',
-    desc: 'Log 52 TRT injections (1 year on protocol).',
-    check: (s) => s.totalTrtLogs >= 52,
-  },
-  
 
   // ── TIME ─────────────────────────────────────────────────
   {
